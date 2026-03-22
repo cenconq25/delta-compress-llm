@@ -4,6 +4,7 @@
 #include "llama-impl.h"
 #include "llama-batch.h"
 #include "llama-io.h"
+#include "llama-kv-cache.h"
 #include "llama-memory.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
@@ -279,6 +280,23 @@ llama_context::llama_context(
         };
 
         memory.reset(model.create_memory(params_mem, cparams));
+
+        // Enable delta KV compression if requested
+        if (params.delta_kv) {
+            auto * kv = dynamic_cast<llama_kv_cache *>(memory.get());
+            if (kv) {
+                kv->delta_kv.enabled = true;
+                kv->delta_kv.kf_interval = params.delta_kv_interval > 0 ? params.delta_kv_interval : 32;
+
+                // Try GPU path if KV is offloaded
+                if (params.offload_kqv) {
+                    kv->delta_kv.init_gpu(0); // device 0
+                }
+
+                LLAMA_LOG_INFO("%s: delta KV cache enabled, keyframe interval = %d, gpu = %s\n",
+                    __func__, kv->delta_kv.kf_interval, kv->delta_kv.use_gpu ? "yes" : "no");
+            }
+        }
     }
 
     // init backends
@@ -1687,6 +1705,14 @@ int llama_context::decode(const llama_batch & batch_inp) {
         ggml_status status;
         const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_DECODER, mctx.get(), status);
 
+        // Apply delta KV compression post-processing
+        if (res) {
+            auto * kv_ctx = dynamic_cast<llama_kv_cache_context *>(mctx.get());
+            if (kv_ctx) {
+                kv_ctx->delta_kv_post_process();
+            }
+        }
+
         if (!res) {
             // the last ubatch failed or was aborted -> remove all positions of that ubatch from the memory module
             llama_pos pos_min[LLAMA_MAX_SEQ];
@@ -2904,6 +2930,7 @@ llama_context_params llama_context_default_params() {
         /*.cb_eval_user_data           =*/ nullptr,
         /*.type_k                      =*/ GGML_TYPE_F16,
         /*.type_v                      =*/ GGML_TYPE_F16,
+        /*.delta_kv_interval           =*/ 32,
         /*.abort_callback              =*/ nullptr,
         /*.abort_callback_data         =*/ nullptr,
         /*.embeddings                  =*/ false,
@@ -2911,6 +2938,7 @@ llama_context_params llama_context_default_params() {
         /*.no_perf                     =*/ true,
         /*.op_offload                  =*/ true,
         /*.swa_full                    =*/ true,
+        /*.delta_kv                    =*/ false,
         /*.kv_unified                  =*/ false,
         /*.sampler                     =*/ nullptr,
         /*.n_sampler                   =*/ 0,

@@ -4,6 +4,7 @@
 #include "llama-graph.h"
 #include "llama-kv-cells.h"
 #include "llama-memory.h"
+#include "llama-kv-cache-delta.h"
 
 #include <unordered_map>
 #include <vector>
@@ -151,6 +152,13 @@ public:
     uint32_t get_n_stream() const;
 
     bool get_has_shift() const;
+
+    // Delta KV cache compression
+    llama_kv_cache_delta delta_kv;
+
+    // Apply delta compression post-processing to newly written entries
+    // Called after graph_compute for each ubatch
+    void delta_kv_process(const slot_info & sinfo, int n_tokens);
 
     //
     // graph_build API
@@ -325,6 +333,9 @@ public:
     //
     // llama_kv_cache_context specific API
     //
+
+    // Apply delta KV compression post-processing for current ubatch
+    void delta_kv_post_process();
 
     uint32_t get_n_kv() const;
 
