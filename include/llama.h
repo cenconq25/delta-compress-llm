@@ -356,6 +356,8 @@ extern "C" {
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]
 
+        int32_t delta_kv_interval; // keyframe interval for delta KV (default 32, 0 = every token is keyframe)
+
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
         // currently works only with CPU execution
@@ -368,6 +370,7 @@ extern "C" {
         bool no_perf;     // measure performance timings
         bool op_offload;  // offload host tensor operations to device
         bool swa_full;    // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
+        bool delta_kv;    // enable delta-quantized KV cache compression [EXPERIMENTAL]
                           // NOTE: setting to false when n_seq_max > 1 can cause bad performance in some cases
                           //       ref: https://github.com/ggml-org/llama.cpp/pull/13845#issuecomment-2924800573
         bool kv_unified;  // use a unified buffer across the input sequences when computing the attention
