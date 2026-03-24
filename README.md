@@ -21,38 +21,71 @@ The quantization error is proportional to the *range* of values being quantized.
 
 ## Benchmark Results
 
-Tested on **Llama 3.1 70B (Q4_K_M)** running on **4x AMD MI50 GPUs** with ROCm 6.3.3.
+All benchmarks run on **4x AMD MI50 GPUs** (128GB HBM2 total) with ROCm 6.3.3.
 
-### Perplexity (WikiText-2, 20 chunks) - lower is better
+### Model 1: Llama 3.1 70B (Q4_K_M) — Dense Transformer
+
+#### Perplexity (WikiText-2, 20 chunks, ctx=512) - lower is better
 
 | KV Cache Config | Perplexity | vs F16 Baseline | Verdict |
 |:---|:---:|:---:|:---:|
-| F16 (baseline) | 3.3389 | - | - |
-| Q8_0 | 3.3444 | +0.16% | OK |
-| **Q4_0** | **3.5385** | **+5.98%** | **Degraded** |
-| **Delta-KV (kf=16)** | **3.3352** | **-0.11%** | **Lossless** |
-| **Delta-KV (kf=32)** | **3.3371** | **-0.05%** | **Lossless** |
-| **Delta-KV (kf=64)** | **3.3367** | **-0.07%** | **Lossless** |
+| F16 (baseline) | 3.2840 | - | - |
+| Q8_0 | 3.2777 | -0.19% | OK |
+| **Q4_0** | **3.4683** | **+5.61%** | **Degraded** |
+| **Delta-KV (kf=16)** | **3.3002** | **+0.49%** | **Near-lossless** |
+| **Delta-KV (kf=32)** | **3.2926** | **+0.26%** | **Near-lossless** |
+| **Delta-KV (kf=64)** | **3.3027** | **+0.57%** | **Near-lossless** |
 
-**Q4_0 loses 6% quality. Delta-KV loses 0%.** Same 4-bit storage.
+**Q4_0 loses 5.6% quality. Delta-KV loses only 0.26%.** Same 4-bit storage, 22x less degradation.
 
-### Long Context (Error Accumulation Test)
+#### Long Context (WikiText-2, 5-10 chunks)
 
-| Context | F16 | Q4_0 | Delta-KV | Q4_0 degradation | Delta-KV degradation |
+| Context | F16 | Q4_0 | Delta-KV (kf=32) | Q4_0 degradation | Delta-KV degradation |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| 512 | 2.6249 | 2.7548 | 2.6236 | +4.9% | **-0.05%** |
-| 1024 | 2.4996 | 2.6638 | 2.5077 | +6.6% | **+0.3%** |
-| 2048 | 2.7837 | 2.9760 | 2.7954 | +6.9% | **+0.4%** |
+| 512 | 3.2840 | 3.4683 | 3.2926 | +5.61% | **+0.26%** |
+| 1024 | 3.0403 | 3.2232 | 3.0390 | +6.02% | **-0.04%** |
+| 2048 | 2.9882 | 3.1318 | 2.9891 | +4.80% | **+0.03%** |
+| 4096 | 3.4612 | 3.6128 | 3.4655 | +4.38% | **+0.12%** |
+| 8192 | 3.3027 | 3.4549 | 3.3038 | +4.61% | **+0.03%** |
+| 16384 | 3.1349 | 3.2461 | 3.1428 | +3.55% | **+0.25%** |
 
-Delta-KV maintains quality even at 2048 context. No error accumulation blowup.
+Q4_0 degradation stays at 3.5-6% across all context lengths. Delta-KV stays under 0.3% — **no error accumulation blowup**, even at 16K tokens with 512 delta frames between keyframes.
 
-### Cross-Domain (Shakespeare)
+#### Coding (C/C++ source corpus, 10 chunks)
 
-| Config | Perplexity | vs F16 |
-|:---|:---:|:---:|
-| F16 | 1.1990 | - |
-| Q4_0 | 1.2211 | +1.8% |
-| Delta-KV (kf=32) | 1.1993 | +0.025% |
+Code has highly repetitive structure (braces, keywords, patterns), making it an ideal test for delta compression since consecutive KV states are very similar.
+
+| Context | F16 | Q4_0 | Delta-KV (kf=32) | Q4_0 degradation | Delta-KV degradation |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| 512 | 3.0602 | 3.0893 | 3.0617 | +0.95% | **+0.05%** |
+| 1024 | 2.8424 | 2.8624 | 2.8445 | +0.70% | **+0.07%** |
+| 2048 | 2.8385 | 2.8686 | 2.8403 | +1.06% | **+0.06%** |
+| 4096 | 2.1956 | 2.2127 | 2.1982 | +0.78% | **+0.12%** |
+
+On code, Q4_0 degradation is smaller (~1%) because code tokens are more predictable. Delta-KV still reduces it by another **10-20x** to under 0.12%.
+
+### Model 2: MiniMax-M2.5 (Q3_K_S, 92GB) — MoE (230B total, 10B active)
+
+MoE models route each token through a sparse subset of expert FFN blocks. This creates more varied KV cache patterns than dense models — a harder test for delta compression.
+
+#### WikiText-2 (20 chunks)
+
+| Context | F16 | Q4_0 | Delta-KV (kf=32) | Q4_0 degradation | Delta-KV degradation |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| 512 | 9.9506 | 10.1941 | 9.9476 | +2.45% | **-0.03%** |
+| 1024 | 9.7667 | 9.9953 | 9.7544 | +2.34% | **-0.13%** |
+| 2048 | 11.1490 | 11.3744 | 11.2088 | +2.02% | **+0.54%** |
+
+#### Coding (C/C++ source corpus, 10 chunks)
+
+| Context | F16 | Q4_0 | Delta-KV (kf=32) | Q4_0 degradation | Delta-KV degradation |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| 512 | 2.8235 | 2.8933 | 2.8303 | +2.47% | **+0.24%** |
+| 1024 | 2.4757 | 2.5219 | 2.4632 | +1.87% | **-0.51%** |
+| 2048 | 2.7446 | 2.7817 | 2.7477 | +1.35% | **+0.11%** |
+| 4096 | 2.0893 | 2.1138 | 2.0899 | +1.17% | **+0.03%** |
+
+**MoE takeaway:** Delta-KV works across architectures. On coding tasks, it reduces Q4_0's degradation by **10-40x** even on a MoE model with expert routing. The benefit is strongest on code where token-to-token KV similarity is highest.
 
 ### Synthetic MSE Analysis
 
@@ -135,7 +168,7 @@ This is a fork of [llama.cpp](https://github.com/ggerganov/llama.cpp) with minim
 - [KVTC](https://arxiv.org/abs/2511.01815) (2025) - Transform coding (PCA + entropy coding, different technique)
 - [NVIDIA kvpress](https://github.com/NVIDIA/kvpress) - KV cache compression framework
 
-Our approach is distinguished by **zero overhead** (no learned components, no entropy coding) and **direct kernel integration** in llama.cpp.
+Our approach is distinguished by **minimal overhead** (no learned components, no entropy coding, no extra model parameters) and **direct kernel integration** in llama.cpp.
 
 ## Hardware
 
