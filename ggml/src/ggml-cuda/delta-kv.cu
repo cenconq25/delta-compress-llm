@@ -88,7 +88,11 @@ __global__ void k_delta_kv_encode(
             }
         }
 
-        // Quantize delta as Q4_0 (same as standard quantize_f32_q4_0_block)
+        // Quantize delta as Q4_0 and update keyframe to reconstructed value.
+        // The keyframe must be updated to keyframe + dequant(delta), NOT the
+        // original source, because the decoder reconstructs from that same sum.
+        // Using the original source would cause encoder/decoder drift since
+        // dequant(quant(delta)) != delta due to Q4_0 quantization error.
         const float d = vmax / -8.0f;
         const float id = d != 0.0f ? 1.0f / d : 0.0f;
 
@@ -102,13 +106,12 @@ __global__ void k_delta_kv_encode(
             const uint8_t xi1 = min(15, (int)(x1 + 8.5f));
 
             delta_block->qs[j] = xi0 | (xi1 << 4);
-        }
 
-        // Update keyframe to current value (rolling keyframe for better accuracy)
-        // This way the NEXT token's delta is computed from THIS token, not the
-        // original keyframe. This minimizes delta magnitude.
-        for (int j = 0; j < QK4_0; ++j) {
-            kf_row[j] = __float2half(src_row[j]);
+            // Update keyframe to reconstructed value (= keyframe + dequant(delta))
+            const float dq0 = d * ((float)xi0 - 8.0f);
+            const float dq1 = d * ((float)xi1 - 8.0f);
+            kf_row[j]              = __float2half(__half2float(kf_row[j])              + dq0);
+            kf_row[j + QK4_0 / 2] = __float2half(__half2float(kf_row[j + QK4_0 / 2]) + dq1);
         }
     }
 }

@@ -153,9 +153,6 @@ public:
 
     bool get_has_shift() const;
 
-    ggml_type type_k() const;
-    ggml_type type_v() const;
-
     // Delta KV cache compression
     llama_kv_cache_delta delta_kv;
 

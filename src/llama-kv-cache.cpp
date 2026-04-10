@@ -2495,14 +2495,6 @@ void llama_kv_cache_context::set_input_pos_bucket(ggml_tensor * dst, const llama
     kv->set_input_pos_bucket(dst, ubatch);
 }
 
-void llama_kv_cache_context::set_input_k_rot(ggml_tensor * dst) const {
-    kv->set_input_k_rot(dst);
-}
-
-void llama_kv_cache_context::set_input_v_rot(ggml_tensor * dst) const {
-    kv->set_input_v_rot(dst);
-}
-
 void llama_kv_cache_context::delta_kv_post_process() {
     if (!kv->delta_kv.enabled) return;
     if (i_cur >= sinfos.size() || i_cur >= ubatches.size()) return;
